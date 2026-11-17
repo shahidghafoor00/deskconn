@@ -85,6 +85,10 @@ mkdir -p "$BASH_COMP_DIR" "$ZSH_COMP_DIR"
 AWK_SCRIPT="$(mktemp)"
 cat > "$AWK_SCRIPT" << 'AWKEOF'
 {
+    if ($0 == "complete -F _desk_bash_autocomplete -o default desk") {
+        print "complete -F _desk_bash_autocomplete -o default desk deskconn"
+        next
+    }
     print
     if ($0 == "_desk_bash_autocomplete() {") {
         print "    COMP_WORDBREAKS=${COMP_WORDBREAKS//:}"
@@ -99,40 +103,135 @@ cat > "$AWK_SCRIPT" << 'AWKEOF'
 AWKEOF
 awk -f "$AWK_SCRIPT" "$BASH_COMP_DIR/desk" > "$BASH_COMP_DIR/desk.tmp"
 mv "$BASH_COMP_DIR/desk.tmp" "$BASH_COMP_DIR/desk"
+cp "$BASH_COMP_DIR/desk" "$BASH_COMP_DIR/deskconn"
 rm -f "$AWK_SCRIPT"
 
 "$BIN_DIR/desk" --completion-script-zsh > "$ZSH_COMP_DIR/_desk"
 
+# In Zsh:
+# 1. Register for both desk and deskconn.
+# 2. Split output on newlines only (preserving filenames with spaces).
+# 3. Do not append trailing spaces after directories ("/") or machine prefixes (":").
+# 4. Trigger completion immediately when autoloaded.
+AWK_ZSH_SCRIPT="$(mktemp)"
+cat > "$AWK_ZSH_SCRIPT" << 'AWKEOF'
+{
+    if ($0 == "#compdef desk") {
+        print "#compdef desk deskconn"
+        next
+    }
+    if ($0 == "    local matches=($(${words[1]} --completion-bash \"${(@)words[2,$CURRENT]}\"))") {
+        print "    local -a matches"
+        print "    local -a lines"
+        print "    lines=(\"${(@f)$(${words[1]} --completion-bash \"${(@)words[2,$CURRENT]}\")}\")"
+        print "    for line in \"${lines[@]}\"; do"
+        print "        [[ -n \"$line\" ]] && matches+=(\"$line\")"
+        print "    done"
+        next
+    }
+    if ($0 == "    compadd -a matches") {
+        print "    if [[ ${#matches[@]} -gt 0 ]]; then"
+        print "        local -a dirs_and_colons files_and_cmds"
+        print "        for m in \"${matches[@]}\"; do"
+        print "            if [[ \"$m\" == */ || \"$m\" == *: ]]; then"
+        print "                dirs_and_colons+=(\"$m\")"
+        print "            else"
+        print "                files_and_cmds+=(\"$m\")"
+        print "            fi"
+        print "        done"
+        print "        [[ ${#dirs_and_colons[@]} -gt 0 ]] && compadd -S '' -a dirs_and_colons"
+        print "        [[ ${#files_and_cmds[@]} -gt 0 ]] && compadd -a files_and_cmds"
+        print "    fi"
+        next
+    }
+    if ($0 == "if [[ \"$(basename -- ${(%):-%x})\" != \"_desk\" ]]; then") {
+        print "if [[ \"$(basename -- ${(%):-%x})\" != \"_desk\" && \"$(basename -- ${(%):-%x})\" != \"_deskconn\" ]]; then"
+        next
+    }
+    if ($0 == "    compdef _desk desk") {
+        print "    compdef _desk desk deskconn 2>/dev/null || true"
+        next
+    }
+    print
+}
+END {
+    print ""
+    print "if [[ \"$funcstack[1]\" = \"_desk\" ]]; then"
+    print "    _desk \"$@\""
+    print "fi"
+}
+AWKEOF
+awk -f "$AWK_ZSH_SCRIPT" "$ZSH_COMP_DIR/_desk" > "$ZSH_COMP_DIR/_desk.tmp"
+mv "$ZSH_COMP_DIR/_desk.tmp" "$ZSH_COMP_DIR/_desk"
+cp "$ZSH_COMP_DIR/_desk" "$ZSH_COMP_DIR/_deskconn"
+rm -f "$AWK_ZSH_SCRIPT"
+
+# Link completions into common Homebrew/system site directories if writable
+for site_dir in "/opt/homebrew/share/zsh/site-functions" "/usr/local/share/zsh/site-functions"; do
+    if [ -d "$site_dir" ] && [ -w "$site_dir" ]; then
+        ln -sf "$ZSH_COMP_DIR/_desk" "$site_dir/_desk" 2>/dev/null || true
+        ln -sf "$ZSH_COMP_DIR/_deskconn" "$site_dir/_deskconn" 2>/dev/null || true
+    fi
+done
+for bash_dir in "/opt/homebrew/etc/bash_completion.d" "/usr/local/etc/bash_completion.d"; do
+    if [ -d "$bash_dir" ] && [ -w "$bash_dir" ]; then
+        ln -sf "$BASH_COMP_DIR/desk" "$bash_dir/desk" 2>/dev/null || true
+        ln -sf "$BASH_COMP_DIR/deskconn" "$bash_dir/deskconn" 2>/dev/null || true
+    fi
+done
+
 echo "Installed shell completions"
 echo "Installed desk $VERSION"
 
-# Add BIN_DIR to PATH in shell config files if not already present
-add_to_path() {
+# Add BIN_DIR and shell completions to shell config files if not already present
+add_shell_config() {
     local file="$1"
-    grep -qF '.local/bin' "$file" 2>/dev/null && return
-    printf '\n# Added by deskconn installer\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$file"
-    echo "  Updated $file"
+    local shell_name="$2"
+
+    grep -qF '.local/bin' "$file" 2>/dev/null || {
+        printf '\n# Added by deskconn installer\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$file"
+        echo "  Updated $file with PATH"
+    }
+
+    if [ "$shell_name" = "zsh" ]; then
+        grep -qF 'deskconn completion' "$file" 2>/dev/null || {
+            cat >> "$file" << 'ZSHEOF'
+
+# Added by deskconn installer (deskconn completion)
+if [ -d "$HOME/.local/share/zsh/site-functions" ]; then
+    fpath=("$HOME/.local/share/zsh/site-functions" $fpath)
+    autoload -Uz _desk 2>/dev/null
+    compdef _desk desk deskconn 2>/dev/null
+fi
+ZSHEOF
+            echo "  Updated $file with shell completions"
+        }
+    elif [ "$shell_name" = "bash" ]; then
+        grep -qF 'deskconn completion' "$file" 2>/dev/null || {
+            cat >> "$file" << 'BASHEOF'
+
+# Added by deskconn installer (deskconn completion)
+if [ -f "$HOME/.local/share/bash-completion/completions/desk" ]; then
+    . "$HOME/.local/share/bash-completion/completions/desk" 2>/dev/null
+fi
+BASHEOF
+            echo "  Updated $file with shell completions"
+        }
+    fi
 }
 
-case ":$PATH:" in
-    *":$BIN_DIR:"*) ;;
-    *)
-        echo "Adding $BIN_DIR to PATH..."
-        [ -f "$HOME/.bashrc" ]        && add_to_path "$HOME/.bashrc"
-        [ -f "$HOME/.bash_profile" ]  && add_to_path "$HOME/.bash_profile"
-        [ -f "$HOME/.zshrc" ]         && add_to_path "$HOME/.zshrc"
-        # Fall back to .profile if none of the above exist (.zshrc on macOS, where zsh is
-        # the default shell and doesn't read .profile)
-        if [ ! -f "$HOME/.bashrc" ] && [ ! -f "$HOME/.bash_profile" ] && [ ! -f "$HOME/.zshrc" ]; then
-            if [ "$OS" = "darwin" ]; then
-                add_to_path "$HOME/.zshrc"
-            else
-                add_to_path "$HOME/.profile"
-            fi
-        fi
-        echo "Run this to apply immediately:  export PATH=\"\$HOME/.local/bin:\$PATH\""
-        ;;
-esac
+[ -f "$HOME/.bashrc" ]        && add_shell_config "$HOME/.bashrc" "bash"
+[ -f "$HOME/.bash_profile" ]  && add_shell_config "$HOME/.bash_profile" "bash"
+[ -f "$HOME/.zshrc" ]         && add_shell_config "$HOME/.zshrc" "zsh"
+# Fall back to .profile if none of the above exist (.zshrc on macOS, where zsh is
+# the default shell and doesn't read .profile)
+if [ ! -f "$HOME/.bashrc" ] && [ ! -f "$HOME/.bash_profile" ] && [ ! -f "$HOME/.zshrc" ]; then
+    if [ "$OS" = "darwin" ]; then
+        add_shell_config "$HOME/.zshrc" "zsh"
+    else
+        add_shell_config "$HOME/.profile" "sh"
+    fi
+fi
 
 install_service_linux() {
     local systemd_user_dir="$HOME/.config/systemd/user"
