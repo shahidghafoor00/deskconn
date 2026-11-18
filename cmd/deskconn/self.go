@@ -304,6 +304,16 @@ func removeApp(cfgDirectory string, skipConfirm bool) error {
 		filepath.Join(bashCompDir, binaryName),
 		filepath.Join(zshCompDir, "_"+cliName),
 		filepath.Join(zshCompDir, "_"+binaryName),
+	}
+
+	fmt.Println("Removing desk binaries and shell completions...")
+	for _, p := range paths {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove %s: %w", p, err)
+		}
+	}
+	// Links the installer may have added to Homebrew/system completion directories.
+	for _, p := range []string{
 		"/opt/homebrew/share/zsh/site-functions/_" + cliName,
 		"/opt/homebrew/share/zsh/site-functions/_" + binaryName,
 		"/usr/local/share/zsh/site-functions/_" + cliName,
@@ -312,13 +322,8 @@ func removeApp(cfgDirectory string, skipConfirm bool) error {
 		"/opt/homebrew/etc/bash_completion.d/" + binaryName,
 		"/usr/local/etc/bash_completion.d/" + cliName,
 		"/usr/local/etc/bash_completion.d/" + binaryName,
-	}
-
-	fmt.Println("Removing desk binaries and shell completions...")
-	for _, p := range paths {
-		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to remove %s: %w", p, err)
-		}
+	} {
+		removeSymlink(p)
 	}
 
 	for _, rcFile := range []string{".bashrc", ".bash_profile", ".zshrc", ".profile"} {
@@ -485,8 +490,10 @@ func installCompletions(deskBin string) error {
 	if err := os.WriteFile(filepath.Join(zshDir, "_desk"), []byte(zshScript), 0644); err != nil { // nolint: gosec
 		return fmt.Errorf("writing zsh completion: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(zshDir, "_deskconn"), []byte(zshScript), 0644); err != nil { // nolint: gosec
-		return fmt.Errorf("writing zsh completion: %w", err)
+	// _desk covers both desk and deskconn; a second file with the same #compdef line could
+	// win at compinit and never call _desk, so remove one left by an earlier install.
+	if err := os.Remove(filepath.Join(zshDir, "_deskconn")); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing stale zsh completion: %w", err)
 	}
 
 	linkOptionalCompletions(zshDir, bashDir)

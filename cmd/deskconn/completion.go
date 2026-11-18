@@ -63,7 +63,7 @@ func fixZshCompletion(script string) string {
     compdef _desk desk
 fi`
 
-	const newFooter = `if [[ "$(basename -- ${(%):-%x})" != "_desk" && "$(basename -- ${(%):-%x})" != "_deskconn" ]]; then
+	const newFooter = `if [[ "$(basename -- ${(%):-%x})" != "_desk" ]]; then
     compdef _desk desk deskconn 2>/dev/null || true
 fi
 
@@ -78,7 +78,7 @@ func linkOptionalCompletions(zshDir, bashDir string) {
 	for _, dir := range []string{"/opt/homebrew/share/zsh/site-functions", "/usr/local/share/zsh/site-functions"} {
 		if isWritableDirectory(dir) {
 			trySymlink(filepath.Join(zshDir, "_desk"), filepath.Join(dir, "_desk"))
-			trySymlink(filepath.Join(zshDir, "_deskconn"), filepath.Join(dir, "_deskconn"))
+			removeSymlink(filepath.Join(dir, "_deskconn"))
 		}
 	}
 	for _, dir := range []string{"/opt/homebrew/etc/bash_completion.d", "/usr/local/etc/bash_completion.d"} {
@@ -89,9 +89,31 @@ func linkOptionalCompletions(zshDir, bashDir string) {
 	}
 }
 
+// trySymlink points link at target. An existing file at link is replaced only if it is a
+// symlink, so a regular file another tool installed there is left alone. The new link is
+// created under a temporary name and renamed into place, so a failure never leaves link missing.
 func trySymlink(target, link string) {
-	_ = os.Remove(link)
-	_ = os.Symlink(target, link)
+	if info, err := os.Lstat(link); err == nil && info.Mode()&os.ModeSymlink == 0 {
+		return
+	} else if err != nil && !os.IsNotExist(err) {
+		return
+	}
+
+	tmp := fmt.Sprintf("%s.tmp-%d", link, os.Getpid())
+	_ = os.Remove(tmp)
+	if err := os.Symlink(target, tmp); err != nil {
+		return
+	}
+	if err := os.Rename(tmp, link); err != nil {
+		_ = os.Remove(tmp)
+	}
+}
+
+// removeSymlink removes path only if it is a symlink, leaving files other tools own alone.
+func removeSymlink(path string) {
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		_ = os.Remove(path)
+	}
 }
 
 func isWritableDirectory(path string) bool {

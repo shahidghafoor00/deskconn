@@ -145,7 +145,7 @@ cat > "$AWK_ZSH_SCRIPT" << 'AWKEOF'
         next
     }
     if ($0 == "if [[ \"$(basename -- ${(%):-%x})\" != \"_desk\" ]]; then") {
-        print "if [[ \"$(basename -- ${(%):-%x})\" != \"_desk\" && \"$(basename -- ${(%):-%x})\" != \"_deskconn\" ]]; then"
+        print
         next
     }
     if ($0 == "    compdef _desk desk") {
@@ -163,20 +163,38 @@ END {
 AWKEOF
 awk -f "$AWK_ZSH_SCRIPT" "$ZSH_COMP_DIR/_desk" > "$ZSH_COMP_DIR/_desk.tmp"
 mv "$ZSH_COMP_DIR/_desk.tmp" "$ZSH_COMP_DIR/_desk"
-cp "$ZSH_COMP_DIR/_desk" "$ZSH_COMP_DIR/_deskconn"
 rm -f "$AWK_ZSH_SCRIPT"
+# _desk covers both desk and deskconn; a second file with the same #compdef line could
+# win at compinit and never call _desk, so remove one left by an earlier install.
+rm -f "$ZSH_COMP_DIR/_deskconn"
+
+# link_completion points $2 at $1. An existing file is replaced only if it's a symlink,
+# leaving one another tool installed alone; the link is made under a temporary name and
+# renamed into place, so a failure never leaves $2 missing.
+link_completion() {
+    local target="$1" link="$2"
+    if [ -e "$link" ] && [ ! -L "$link" ]; then
+        return 0
+    fi
+    local tmp="$link.tmp-$$"
+    rm -f "$tmp"
+    ln -s "$target" "$tmp" 2>/dev/null || return 0
+    mv -f "$tmp" "$link" 2>/dev/null || rm -f "$tmp"
+}
 
 # Link completions into common Homebrew/system site directories if writable
 for site_dir in "/opt/homebrew/share/zsh/site-functions" "/usr/local/share/zsh/site-functions"; do
     if [ -d "$site_dir" ] && [ -w "$site_dir" ]; then
-        ln -sf "$ZSH_COMP_DIR/_desk" "$site_dir/_desk" 2>/dev/null || true
-        ln -sf "$ZSH_COMP_DIR/_deskconn" "$site_dir/_deskconn" 2>/dev/null || true
+        link_completion "$ZSH_COMP_DIR/_desk" "$site_dir/_desk"
+        if [ -L "$site_dir/_deskconn" ]; then
+            rm -f "$site_dir/_deskconn"
+        fi
     fi
 done
 for bash_dir in "/opt/homebrew/etc/bash_completion.d" "/usr/local/etc/bash_completion.d"; do
     if [ -d "$bash_dir" ] && [ -w "$bash_dir" ]; then
-        ln -sf "$BASH_COMP_DIR/desk" "$bash_dir/desk" 2>/dev/null || true
-        ln -sf "$BASH_COMP_DIR/deskconn" "$bash_dir/deskconn" 2>/dev/null || true
+        link_completion "$BASH_COMP_DIR/desk" "$bash_dir/desk"
+        link_completion "$BASH_COMP_DIR/deskconn" "$bash_dir/deskconn"
     fi
 done
 
