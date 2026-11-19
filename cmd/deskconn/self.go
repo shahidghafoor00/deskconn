@@ -35,7 +35,8 @@ func registerSelfCommands(app *kingpin.Application) *selfCommands {
 	updateCmd := selfCmd.Command("update", "Check for updates and install the latest release")
 	removeCmd := selfCmd.Command("remove", "Remove desk from this machine")
 	removeYes := removeCmd.Flag("yes", "Do not prompt for confirmation").Short('y').Bool()
-	installCompletionsCmd := selfCmd.Command("install-completions", "Install shell completions (used by install.sh)").Hidden()
+	installCompletionsCmd := selfCmd.Command("install-completions",
+		"Install shell completions (used by install.sh)").Hidden()
 
 	return &selfCommands{
 		version:            versionCmd,
