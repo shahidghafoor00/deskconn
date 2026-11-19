@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -53,4 +55,50 @@ fi
 	assert.Contains(t, out, "compadd -a files_and_cmds")
 	assert.Contains(t, out, `if [[ "$funcstack[1]" = "_desk" ]]; then`)
 	assert.False(t, strings.Contains(out, "compadd -a matches"))
+}
+
+func TestTrySymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+
+	// A regular file another tool owns is left alone.
+	regular := filepath.Join(dir, "regular")
+	assert.NoError(t, os.WriteFile(regular, []byte("theirs"), 0600))
+	trySymlink(target, regular)
+	data, err := os.ReadFile(regular)
+	assert.NoError(t, err)
+	assert.Equal(t, "theirs", string(data))
+
+	// An existing symlink is replaced.
+	old := filepath.Join(dir, "old")
+	assert.NoError(t, os.Symlink(filepath.Join(dir, "elsewhere"), old))
+	trySymlink(target, old)
+	dest, err := os.Readlink(old)
+	assert.NoError(t, err)
+	assert.Equal(t, target, dest)
+
+	// A missing link is created, with no temporary file left behind.
+	fresh := filepath.Join(dir, "fresh")
+	trySymlink(target, fresh)
+	dest, err = os.Readlink(fresh)
+	assert.NoError(t, err)
+	assert.Equal(t, target, dest)
+	matches, err := filepath.Glob(filepath.Join(dir, "*.tmp-*"))
+	assert.NoError(t, err)
+	assert.Empty(t, matches)
+}
+
+func TestRemoveSymlink(t *testing.T) {
+	dir := t.TempDir()
+	regular := filepath.Join(dir, "regular")
+	link := filepath.Join(dir, "link")
+	assert.NoError(t, os.WriteFile(regular, []byte("theirs"), 0600))
+	assert.NoError(t, os.Symlink(regular, link))
+
+	removeSymlink(regular)
+	removeSymlink(link)
+
+	assert.FileExists(t, regular)
+	_, err := os.Lstat(link)
+	assert.True(t, os.IsNotExist(err))
 }

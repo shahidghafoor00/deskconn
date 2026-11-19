@@ -71,145 +71,33 @@ mv "$TMP_DIR/deskconn" "$EXEC_DIR/deskconn"
 chmod 755 "$EXEC_DIR/deskconn"
 ln -sf "$EXEC_DIR/deskconn" "$BIN_DIR/desk"
 
-BASH_COMP_DIR="$HOME/.local/share/bash-completion/completions"
-ZSH_COMP_DIR="$HOME/.local/share/zsh/site-functions"
-
-mkdir -p "$BASH_COMP_DIR" "$ZSH_COMP_DIR"
-
-"$BIN_DIR/desk" --completion-script-bash > "$BASH_COMP_DIR/desk"
-
-# ':' is in COMP_WORDBREAKS by default, which splits "device:path" at the colon.
-# Make path completions behave like "cd": show only the last path segment
-# in the menu, and don't add a trailing space after directories/"device:".
-# (awk rather than "sed -i", whose syntax differs between GNU and macOS sed.)
-AWK_SCRIPT="$(mktemp)"
-cat > "$AWK_SCRIPT" << 'AWKEOF'
-{
-    if ($0 == "complete -F _desk_bash_autocomplete -o default desk") {
-        print "complete -F _desk_bash_autocomplete -o default desk deskconn"
-        next
-    }
-    print
-    if ($0 == "_desk_bash_autocomplete() {") {
-        print "    COMP_WORDBREAKS=${COMP_WORDBREAKS//:}"
-    }
-    if ($0 == "    COMPREPLY=( $(compgen -W \"${opts}\" -- ${cur}) )") {
-        print "    compopt -o filenames 2>/dev/null || true"
-        print "    if [ \"${#COMPREPLY[@]}\" -eq 1 ] && [[ \"${COMPREPLY[0]}\" == */ || \"${COMPREPLY[0]}\" == *: ]]; then"
-        print "        compopt -o nospace 2>/dev/null || true"
-        print "    fi"
-    }
-}
-AWKEOF
-awk -f "$AWK_SCRIPT" "$BASH_COMP_DIR/desk" > "$BASH_COMP_DIR/desk.tmp"
-mv "$BASH_COMP_DIR/desk.tmp" "$BASH_COMP_DIR/desk"
-cp "$BASH_COMP_DIR/desk" "$BASH_COMP_DIR/deskconn"
-rm -f "$AWK_SCRIPT"
-
-"$BIN_DIR/desk" --completion-script-zsh > "$ZSH_COMP_DIR/_desk"
-
-# In Zsh:
-# 1. Register for both desk and deskconn.
-# 2. Split output on newlines only (preserving filenames with spaces).
-# 3. Do not append trailing spaces after directories ("/") or machine prefixes (":").
-# 4. Trigger completion immediately when autoloaded.
-AWK_ZSH_SCRIPT="$(mktemp)"
-cat > "$AWK_ZSH_SCRIPT" << 'AWKEOF'
-{
-    if ($0 == "#compdef desk") {
-        print "#compdef desk deskconn"
-        next
-    }
-    if ($0 == "    local matches=($(${words[1]} --completion-bash \"${(@)words[2,$CURRENT]}\"))") {
-        print "    local -a matches"
-        print "    local -a lines"
-        print "    lines=(\"${(@f)$(${words[1]} --completion-bash \"${(@)words[2,$CURRENT]}\")}\")"
-        print "    for line in \"${lines[@]}\"; do"
-        print "        [[ -n \"$line\" ]] && matches+=(\"$line\")"
-        print "    done"
-        next
-    }
-    if ($0 == "    compadd -a matches") {
-        print "    if [[ ${#matches[@]} -gt 0 ]]; then"
-        print "        local -a dirs_and_colons files_and_cmds"
-        print "        for m in \"${matches[@]}\"; do"
-        print "            if [[ \"$m\" == */ || \"$m\" == *: ]]; then"
-        print "                dirs_and_colons+=(\"$m\")"
-        print "            else"
-        print "                files_and_cmds+=(\"$m\")"
-        print "            fi"
-        print "        done"
-        print "        [[ ${#dirs_and_colons[@]} -gt 0 ]] && compadd -S '' -a dirs_and_colons"
-        print "        [[ ${#files_and_cmds[@]} -gt 0 ]] && compadd -a files_and_cmds"
-        print "    fi"
-        next
-    }
-    if ($0 == "if [[ \"$(basename -- ${(%):-%x})\" != \"_desk\" ]]; then") {
-        print
-        next
-    }
-    if ($0 == "    compdef _desk desk") {
-        print "    compdef _desk desk deskconn 2>/dev/null || true"
-        next
-    }
-    print
-}
-END {
-    print ""
-    print "if [[ \"$funcstack[1]\" = \"_desk\" ]]; then"
-    print "    _desk \"$@\""
-    print "fi"
-}
-AWKEOF
-awk -f "$AWK_ZSH_SCRIPT" "$ZSH_COMP_DIR/_desk" > "$ZSH_COMP_DIR/_desk.tmp"
-mv "$ZSH_COMP_DIR/_desk.tmp" "$ZSH_COMP_DIR/_desk"
-rm -f "$AWK_ZSH_SCRIPT"
-# _desk covers both desk and deskconn; a second file with the same #compdef line could
-# win at compinit and never call _desk, so remove one left by an earlier install.
-rm -f "$ZSH_COMP_DIR/_deskconn"
-
-# link_completion points $2 at $1. An existing file is replaced only if it's a symlink,
-# leaving one another tool installed alone; the link is made under a temporary name and
-# renamed into place, so a failure never leaves $2 missing.
-link_completion() {
-    local target="$1" link="$2"
-    if [ -e "$link" ] && [ ! -L "$link" ]; then
-        return 0
-    fi
-    local tmp="$link.tmp-$$"
-    rm -f "$tmp"
-    ln -s "$target" "$tmp" 2>/dev/null || return 0
-    mv -f "$tmp" "$link" 2>/dev/null || rm -f "$tmp"
-}
-
-# Link completions into common Homebrew/system site directories if writable
-for site_dir in "/opt/homebrew/share/zsh/site-functions" "/usr/local/share/zsh/site-functions"; do
-    if [ -d "$site_dir" ] && [ -w "$site_dir" ]; then
-        link_completion "$ZSH_COMP_DIR/_desk" "$site_dir/_desk"
-        if [ -L "$site_dir/_deskconn" ]; then
-            rm -f "$site_dir/_deskconn"
-        fi
-    fi
-done
-for bash_dir in "/opt/homebrew/etc/bash_completion.d" "/usr/local/etc/bash_completion.d"; do
-    if [ -d "$bash_dir" ] && [ -w "$bash_dir" ]; then
-        link_completion "$BASH_COMP_DIR/desk" "$bash_dir/desk"
-        link_completion "$BASH_COMP_DIR/deskconn" "$bash_dir/deskconn"
-    fi
-done
-
-echo "Installed shell completions"
+# desk generates its completion scripts and applies the zsh/bash fixes itself, the same
+# way "desk self update" does, so the installer and updates can't drift apart.
+if "$BIN_DIR/desk" self install-completions; then
+    echo "Installed shell completions"
+else
+    echo "warning: failed to install shell completions" >&2
+fi
 echo "Installed desk $VERSION"
 
-# Add BIN_DIR and shell completions to shell config files if not already present
+# BIN_DIR goes into shell config files only if it isn't on PATH already.
+NEED_PATH=""
+case ":$PATH:" in
+    *":$BIN_DIR:"*) ;;
+    *) NEED_PATH=1 ;;
+esac
+
+# Add BIN_DIR (when needed) and shell completions to shell config files if not already present
 add_shell_config() {
     local file="$1"
     local shell_name="$2"
 
-    grep -qF '.local/bin' "$file" 2>/dev/null || {
-        printf '\n# Added by deskconn installer\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$file"
-        echo "  Updated $file with PATH"
-    }
+    if [ -n "$NEED_PATH" ]; then
+        grep -qF '.local/bin' "$file" 2>/dev/null || {
+            printf '\n# Added by deskconn installer\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$file"
+            echo "  Updated $file with PATH"
+        }
+    fi
 
     if [ "$shell_name" = "zsh" ]; then
         grep -qF 'deskconn completion' "$file" 2>/dev/null || {
@@ -245,10 +133,16 @@ BASHEOF
 # the default shell and doesn't read .profile)
 if [ ! -f "$HOME/.bashrc" ] && [ ! -f "$HOME/.bash_profile" ] && [ ! -f "$HOME/.zshrc" ]; then
     if [ "$OS" = "darwin" ]; then
+        # A .zshrc we create ourselves has nothing else to run compinit, without which
+        # compdef doesn't exist and completion silently does nothing.
+        printf '# Added by deskconn installer\nautoload -Uz compinit && compinit\n' > "$HOME/.zshrc"
         add_shell_config "$HOME/.zshrc" "zsh"
     else
         add_shell_config "$HOME/.profile" "sh"
     fi
+fi
+if [ -n "$NEED_PATH" ]; then
+    echo "Run this to apply immediately:  export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi
 
 install_service_linux() {
