@@ -49,6 +49,7 @@ fi
 	out := fixZshCompletion(input)
 
 	assert.Contains(t, out, "#compdef desk deskconn")
+	assert.Contains(t, out, "    local line m\n")
 	assert.Contains(t, out, "compdef _desk desk deskconn")
 	assert.Contains(t, out, `lines=("${(@f)$(${words[1]} --completion-bash "${(@)words[2,$CURRENT]}")}")`)
 	assert.Contains(t, out, "compadd -S '' -a dirs_and_colons")

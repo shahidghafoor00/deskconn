@@ -39,6 +39,7 @@ func fixZshCompletion(script string) string {
 		"    compadd -a matches"
 	const newBody = `    local -a matches
     local -a lines
+    local line m
     lines=("${(@f)$(${words[1]} --completion-bash "${(@)words[2,$CURRENT]}")}")
     for line in "${lines[@]}"; do
         [[ -n "$line" ]] && matches+=("$line")
